@@ -138,6 +138,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     BOOK_STYLE = 4,
     PARAGRAPH_ALIGNMENT_COUNT
   };
+  // Manual writing-mode override for EPUB body text. Auto-detection from CSS /
+  // OPF is Stage 3; Phase 1 exposes a global Horizontal / Vertical switch.
+  enum WRITING_MODE : uint8_t { WM_HORIZONTAL = 0, WM_VERTICAL = 1, WRITING_MODE_COUNT };
 
   // Auto-sleep timeout options (in minutes)
   enum SLEEP_TIMEOUT {
@@ -325,6 +328,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t fontPointSize = DEFAULT_FONT_POINT_SIZE;
   uint8_t lineSpacing = LINE_SPACING_120;
   uint8_t paragraphAlignment = JUSTIFIED;
+  uint8_t writingMode = WM_HORIZONTAL;
+  bool isVerticalWriting() const { return writingMode == WM_VERTICAL; }
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)
@@ -466,6 +471,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     uint8_t progressBarMode = HIDE_PROGRESS;  // STATUS_BAR_PROGRESS_BAR
     uint8_t progressBarHeightPx = 0;          // (thickness+1)*2; 0 when the bar is hidden
     uint8_t xtcMode = XTC_STATUS_BAR_HIDE;    // XTC_STATUS_BAR_MODE
+    bool rtlProgress = false;
 
     bool showsProgressBar() const { return progressBarMode != HIDE_PROGRESS; }
     bool showsTitle() const { return titleMode != HIDE_TITLE; }

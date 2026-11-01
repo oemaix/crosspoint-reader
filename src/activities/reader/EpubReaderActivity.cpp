@@ -979,6 +979,14 @@ void EpubReaderActivity::loop() {
   auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
+  // Orientation long-press follows the physical button. The swap below remaps
+  // page turns and chapter skip only.
+  const bool orientationNext = nextTriggered;
+  // vertical-rl: next page is to the left, so physical prev becomes reading-forward.
+  // Tilt "forward" stays reading-forward.
+  if (SETTINGS.isVerticalWriting() && !fromTilt) {
+    std::swap(prevTriggered, nextTriggered);
+  }
   if (!prevTriggered && !nextTriggered) {
     // Nothing to act on in this frame: build more of the chapter.
     backgroundBuildTick();
@@ -1006,8 +1014,8 @@ void EpubReaderActivity::loop() {
 
   if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.ORIENTATION_CHANGE) {
     const uint8_t newOrientation =
-        nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
-                      : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
+        orientationNext ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
+                        : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
     applyOrientation(newOrientation);
     if (touch.prev || touch.next) haptic_feedback::touchAction(true);
     requestUpdate();
@@ -2475,8 +2483,9 @@ void EpubReaderActivity::renderStatusBar() const {
 // ---------------------------------------------------------------------------
 
 namespace {
-constexpr StrId kTextRowNames[] = {StrId::STR_FONT, StrId::STR_FONT_SIZE, StrId::STR_LINE_SPACING,
-                                   StrId::STR_PARA_ALIGNMENT, StrId::STR_FOCUS_READING};
+constexpr StrId kTextRowNames[] = {StrId::STR_FONT,           StrId::STR_FONT_SIZE,    StrId::STR_LINE_SPACING,
+                                   StrId::STR_PARA_ALIGNMENT, StrId::STR_WRITING_MODE, StrId::STR_FOCUS_READING};
+constexpr StrId kWritingModeIds[] = {StrId::STR_WRITING_HORIZONTAL, StrId::STR_WRITING_VERTICAL};
 constexpr StrId kAlignIds[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                StrId::STR_BOOK_S_STYLE};
 constexpr int kTextRowCount = static_cast<int>(std::size(kTextRowNames));
@@ -2514,6 +2523,8 @@ std::string EpubReaderActivity::textRowValue(int row) const {
       return I18N.get(LINE_SPACING_IDS[SETTINGS.lineSpacing % CrossPointSettings::LINE_COMPRESSION_COUNT]);
     case 3:
       return I18N.get(kAlignIds[SETTINGS.paragraphAlignment % CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT]);
+    case 4:
+      return I18N.get(kWritingModeIds[SETTINGS.writingMode % CrossPointSettings::WRITING_MODE_COUNT]);
     default:
       return "";
   }
@@ -2561,6 +2572,13 @@ void EpubReaderActivity::showTextRowPopup(const int row) {
       overlayPopup.show(StrId::STR_PARA_ALIGNMENT, kAlignIds, static_cast<int>(std::size(kAlignIds)),
                         SETTINGS.paragraphAlignment % CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT, [this](int idx) {
                           SETTINGS.paragraphAlignment = static_cast<uint8_t>(idx);
+                          applyTextSettingLive();
+                        });
+      break;
+    case 4:
+      overlayPopup.show(StrId::STR_WRITING_MODE, kWritingModeIds, static_cast<int>(std::size(kWritingModeIds)),
+                        SETTINGS.writingMode % CrossPointSettings::WRITING_MODE_COUNT, [this](int idx) {
+                          SETTINGS.writingMode = static_cast<uint8_t>(idx);
                           applyTextSettingLive();
                         });
       break;
@@ -2900,7 +2918,7 @@ void EpubReaderActivity::handleOverlayInput() {
                                  if (toolbarUi) toolbarUi->begin();  // the picker drew its own FUI screen
                                  requestUpdate();                    // re-render page + Text panel
                                });
-      } else if (panelIndex == 4) {
+      } else if (panelIndex == 5) {
         // Focus Reading is a genuine on/off: a tap toggles and applies live.
         SETTINGS.focusReadingEnabled = SETTINGS.focusReadingEnabled ? 0 : 1;
         applyTextSettingLive();

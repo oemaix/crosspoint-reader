@@ -40,6 +40,8 @@ class GfxRenderer {
     lastLineY = y;
     ++drawnLineCount;
   }
+  void drawTextVertical(int, int, int, const char*, bool, EpdFontFamily::Style) const {}
+  void drawTextSideways(int, int, int, const char*, bool, EpdFontFamily::Style, int = 0) const {}
   mutable std::string boxPaints;
   void fillRect(int, int, int, int, bool = true) const { boxPaints += 'b'; }
   void fillRectDither(int, int, int, int, Color) const { boxPaints += 's'; }

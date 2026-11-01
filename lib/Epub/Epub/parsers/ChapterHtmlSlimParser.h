@@ -48,6 +48,8 @@ class ChapterHtmlSlimParser {
   std::string rubyTextBuffer;
   std::unique_ptr<Page> currentPage = nullptr;
   int16_t currentPageNextY = 0;
+  int16_t currentPageNextX = 0;
+  bool pageHasVerticalColumns = false;
   int fontId;
   float lineCompression;
   bool extraParagraphSpacing;
@@ -62,6 +64,7 @@ class ChapterHtmlSlimParser {
   const CssParser* cssParser;
   bool embeddedStyle;
   uint8_t imageRendering;
+  uint8_t writingMode;
   std::string contentBase;
   std::string imageBasePath;
   int imageCounter = 0;
@@ -282,6 +285,10 @@ class ChapterHtmlSlimParser {
   void pushBlockTextStyleEntry(const CssStyle& cssStyle);
   void pushDecorationStyleEntry(CssTextDecoration defaultDecoration, const CssStyle& cssStyle);
   void emitHorizontalRule(const BlockStyle& blockStyle);
+  bool isVerticalWriting() const { return writingMode != 0; }
+  bool columnsFlowRightToLeft() const { return writingMode != 2; }
+  void onNewPage();
+  int verticalColumnPitch(const TextBlock& line) const;
   // XML callbacks
   static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void XMLCALL characterData(void* userData, const XML_Char* s, int len);
@@ -297,7 +304,8 @@ class ChapterHtmlSlimParser {
       const std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)>& completePageFn,
       const bool embeddedStyle, const std::string& contentBase, const std::string& imageBasePath,
       const uint8_t imageRendering = 0, std::vector<std::string> tocAnchors = {},
-      const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+      const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr,
+      const uint8_t writingMode = 0)
 
       : epub(epub),
         filepath(filepath),
@@ -315,6 +323,7 @@ class ChapterHtmlSlimParser {
         cssParser(cssParser),
         embeddedStyle(embeddedStyle),
         imageRendering(imageRendering),
+        writingMode(writingMode),
         contentBase(contentBase),
         imageBasePath(imageBasePath),
         tocAnchors(std::move(tocAnchors)) {}

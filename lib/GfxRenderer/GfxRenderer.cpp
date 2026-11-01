@@ -10,6 +10,7 @@
 #include <SdCardFont.h>
 #include <TtfEpdFont.h>
 #include <Utf8.h>
+#include <VerticalTextUtils.h>
 
 #include <algorithm>
 
@@ -2322,6 +2323,118 @@ int GfxRenderer::getTextHeight(const int fontId) const {
     return 0;
   }
   return fontIt->second.getData(EpdFontFamily::REGULAR)->ascender;
+}
+
+namespace {
+void encodeUtf8Cp(const uint32_t cp, char out[5]) {
+  if (cp < 0x80) {
+    out[0] = static_cast<char>(cp);
+    out[1] = '\0';
+  } else if (cp < 0x800) {
+    out[0] = static_cast<char>(0xC0 | (cp >> 6));
+    out[1] = static_cast<char>(0x80 | (cp & 0x3F));
+    out[2] = '\0';
+  } else if (cp < 0x10000) {
+    out[0] = static_cast<char>(0xE0 | (cp >> 12));
+    out[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out[2] = static_cast<char>(0x80 | (cp & 0x3F));
+    out[3] = '\0';
+  } else {
+    out[0] = static_cast<char>(0xF0 | (cp >> 18));
+    out[1] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = static_cast<char>(0x80 | (cp & 0x3F));
+    out[4] = '\0';
+  }
+}
+
+// drawTextRotated90CW treats y as the bottom of the ink and adds the ascender
+// to x. Shift x back by that ascender so the em box is centered in the column.
+int rotatedColumnOriginX(const int columnLeft, const int columnWidth, const int em, const int ascender) {
+  const int box = columnWidth > 0 ? columnWidth : em;
+  return columnLeft + (box - ascender) / 2;
+}
+}  // namespace
+
+void GfxRenderer::drawTextVertical(const int fontId, const int x, const int y, const char* text, const bool black,
+                                   const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') {
+    return;
+  }
+  if (isFontCacheScanning()) {
+    fontCacheManager_->recordText(text, fontId, style);
+    const char* scanPtr = text;
+    while (const uint32_t scanCp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&scanPtr))) {
+      const uint32_t mapped = VerticalTextUtils::verticalPresentationForm(scanCp);
+      if (mapped == 0) continue;
+      char mappedBuf[5] = {};
+      encodeUtf8Cp(mapped, mappedBuf);
+      fontCacheManager_->recordText(mappedBuf, resolveTextFontId(fontId, mappedBuf, style), style);
+    }
+    return;
+  }
+
+  int yPos = y;
+  const char* ptr = text;
+  const int em = getLineHeight(fontId);
+  const int ascender = getFontAscenderSize(fontId);
+  const int sidewaysX = rotatedColumnOriginX(x, em, em, ascender);
+  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&ptr))) {
+    char srcBuf[5] = {};
+    encodeUtf8Cp(cp, srcBuf);
+    const int advance = getTextAdvanceX(fontId, srcBuf, style);
+
+    uint32_t drawCp = cp;
+    if (const uint32_t mapped = VerticalTextUtils::verticalPresentationForm(cp)) {
+      char mappedBuf[5] = {};
+      encodeUtf8Cp(mapped, mappedBuf);
+      const int mappedFontId = resolveTextFontId(fontId, mappedBuf, style);
+      const auto fontIt = fontMap.find(mappedFontId);
+      if (fontIt != fontMap.end() && fontIt->second.hasCodepoint(mapped, style)) {
+        drawCp = mapped;
+      }
+    }
+
+    if (drawCp == cp && VerticalTextUtils::isSidewaysPunctuation(cp)) {
+      drawTextRotated90CW(fontId, sidewaysX, yPos + advance, srcBuf, black, style);
+      yPos += advance;
+      continue;
+    }
+
+    char charBuf[5] = {};
+    encodeUtf8Cp(drawCp, charBuf);
+    int drawX = x;
+    int drawY = yPos;
+    if (VerticalTextUtils::isSmallKana(cp) && advance > 0) {
+      drawX += (advance * VerticalTextUtils::SMALL_KANA_DX_PERCENT + 50) / 100;
+      drawY -= (advance * VerticalTextUtils::SMALL_KANA_DY_PERCENT + 50) / 100;
+    }
+    drawText(fontId, drawX, drawY, charBuf, black, style);
+    yPos += advance;
+  }
+}
+
+void GfxRenderer::drawTextSideways(const int fontId, const int x, const int y, const char* text, const bool black,
+                                   const EpdFontFamily::Style style, const int columnWidth) const {
+  if (text == nullptr || *text == '\0') {
+    return;
+  }
+  if (isFontCacheScanning()) {
+    fontCacheManager_->recordText(text, fontId, style);
+    return;
+  }
+
+  const int em = getLineHeight(fontId);
+  const int drawX = rotatedColumnOriginX(x, columnWidth, em, getFontAscenderSize(fontId));
+  int yPos = y;
+  const char* ptr = text;
+  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&ptr))) {
+    char charBuf[5] = {};
+    encodeUtf8Cp(cp, charBuf);
+    const int advance = getTextAdvanceX(fontId, charBuf, style);
+    drawTextRotated90CW(fontId, drawX, yPos + advance, charBuf, black, style);
+    yPos += advance;
+  }
 }
 
 void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y, const char* text, const bool black,

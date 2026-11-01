@@ -184,4 +184,11 @@ class ParsedText {
                              const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processLine,
                              bool includeLastLine = true, int8_t characterSpacing = 0, uint8_t wordSpacingPercent = 100,
                              size_t maxLines = SIZE_MAX, const bool* stopRequested = nullptr);
+  // Columns broken against viewport height; xpos in the resulting TextBlock is
+  // the Y offset within the column. Soft-flush callers pass includeLastColumn=false
+  // so a trailing partial column stays in this object for the next layout call.
+  void layoutVerticalColumns(const GfxRenderer& renderer, int fontId, uint16_t columnHeight,
+                             const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processColumn,
+                             bool includeLastColumn = true, int8_t characterSpacing = 0,
+                             uint8_t wordSpacingPercent = 100, const bool* stopRequested = nullptr);
 };

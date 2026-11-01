@@ -325,6 +325,7 @@ CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
   spec.progressBarHeightPx =
       statusBarProgressBar != HIDE_PROGRESS ? static_cast<uint8_t>((statusBarProgressBarThickness + 1) * 2) : 0;
   spec.xtcMode = xtcStatusBarMode;
+  spec.rtlProgress = writingMode == WM_VERTICAL;
   return spec;
 }
 
@@ -345,6 +346,7 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
   // Same layout as Display, so switching between them keeps the section cache.
   spec.imageRendering = imageRendering == IMAGES_DISPLAY_BW ? static_cast<uint8_t>(IMAGES_DISPLAY) : imageRendering;
   spec.focusReadingEnabled = focusReadingEnabled != 0;
+  spec.writingMode = (writingMode == WM_VERTICAL) ? 1 : 0;
   return spec;
 }
 

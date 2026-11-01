@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <Utf8.h>
+#include <VerticalTextUtils.h>
 
 #include <algorithm>
 #include <cmath>
@@ -885,6 +886,294 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     eraseVisibleOffsetPrefix(consumed);
     if (!rubyTexts.empty()) {
       const size_t rtConsumed = std::min(consumed, rubyTexts.size());
+      rubyTexts.erase(rubyTexts.begin(), rubyTexts.begin() + rtConsumed);
+    }
+  }
+}
+
+void ParsedText::layoutVerticalColumns(const GfxRenderer& renderer, const int fontId, const uint16_t columnHeight,
+                                       const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processColumn,
+                                       const bool includeLastColumn, const int8_t characterSpacing,
+                                       const uint8_t wordSpacingPercent, const bool* stopRequested) {
+  if (words.empty() || (stopRequested && *stopRequested)) {
+    return;
+  }
+  blockStyle.characterSpacing = characterSpacing;
+  this->wordSpacingPercent = wordSpacingPercent;
+
+  isNaturalAlign =
+      blockStyle.alignment == CssTextAlign::Justify ||
+      (blockStyle.isRtl ? blockStyle.alignment == CssTextAlign::Right : blockStyle.alignment == CssTextAlign::Left);
+
+  int32_t paragraphFonts[MAX_SIZE_SLOTS] = {fontId};
+  size_t paragraphFontCount = 1;
+  for (uint8_t slot = 1; slot < sizeSlotCount; ++slot) {
+    const int32_t slotFont = sizeSlotFontIds[slot];
+    if (slotFont != 0 && std::find(paragraphFonts, paragraphFonts + paragraphFontCount, slotFont) ==
+                             paragraphFonts + paragraphFontCount) {
+      paragraphFonts[paragraphFontCount++] = slotFont;
+    }
+  }
+  const bool anySdFont = std::any_of(paragraphFonts, paragraphFonts + paragraphFontCount,
+                                     [&renderer](const int32_t font) { return renderer.isSdCardFont(font); });
+  if (anySdFont) {
+    uint8_t styleMask = 0;
+    for (auto s : wordStyles) {
+      styleMask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(s) & 0x03));
+    }
+    if (styleMask == 0) styleMask = 0x01;
+    const bool includeSmallCaps = std::any_of(wordSizeSlots.begin(), wordSizeSlots.end(), [](const uint8_t slot) {
+      return (slot & TextBlock::SMALL_CAPS_SLOT_FLAG) != 0;
+    });
+    std::vector<const char*> segments;
+    std::vector<size_t> segmentLens;
+    segments.reserve(wordStore.chunkCount());
+    segmentLens.reserve(wordStore.chunkCount());
+    for (size_t i = 0; i < wordStore.chunkCount(); ++i) {
+      const char* data = wordStore.chunkData(i);
+      if (!data) continue;
+      segments.push_back(data);
+      segmentLens.push_back(wordStore.chunkUsed(i));
+    }
+    for (size_t i = 0; i < paragraphFontCount; ++i) {
+      if (!renderer.isSdCardFont(paragraphFonts[i])) continue;
+      renderer.ensureSdCardFontReady(paragraphFonts[i], segments.data(), segmentLens.data(), segments.size(),
+                                     words.size() > 1, hyphenationEnabled, styleMask, includeSmallCaps);
+    }
+  }
+
+  std::vector<uint16_t> wordHeights;
+  wordHeights.reserve(words.size());
+  for (size_t i = 0; i < words.size(); i++) {
+    const uint8_t focusBoundary = i < wordFocusBoundary.size() ? wordFocusBoundary[i] : 0;
+    wordHeights.push_back(measureFocusWordWidth(renderer, wordFontId(i, fontId), wordAt(i), getWordStyleAt(i),
+                                                focusBoundary, characterSpacing, wordSpacingPercent));
+  }
+
+  const int firstColumnIndent = resolveFirstLineIndent(true, renderer, fontId);
+  const auto gapBefore = [&](const size_t columnStart, const size_t index) -> int {
+    if (index <= columnStart || index >= words.size()) return 0;
+    if (index < wordContinues.size() && wordContinues[index]) {
+      return renderer.getKerning(fontId, lastCodepoint(wordAt(index - 1)), firstCodepoint(wordAt(index)),
+                                 getWordStyleAt(index - 1), characterSpacing);
+    }
+    if (index < wordNoSpaceBefore.size() && wordNoSpaceBefore[index]) return characterSpacing;
+    return scaleSpace(renderer.getSpaceAdvance(fontId, lastCodepoint(wordAt(index - 1)), firstCodepoint(wordAt(index)),
+                                               getWordStyleAt(index - 1)),
+                      wordSpacingPercent);
+  };
+  const auto isRubyContinue = [&](const size_t index) -> bool {
+    return index < wordStyles.size() && (wordStyles[index] & EpdFontFamily::RUBY_CONTINUE) != 0;
+  };
+  const auto spanHeight = [&](const size_t from, const size_t toInclusive) -> int {
+    int height = 0;
+    for (size_t j = from; j <= toInclusive && j < words.size(); ++j) {
+      height += gapBefore(from, j) + static_cast<int>(wordHeights[j]);
+    }
+    return height;
+  };
+
+  std::vector<size_t> columnEnds;
+  columnEnds.reserve(words.size() / 8 + 1);
+  {
+    size_t columnStart = 0;
+    int currentY = firstColumnIndent;
+    for (size_t i = 0; i < words.size(); i++) {
+      const int step = gapBefore(columnStart, i) + static_cast<int>(wordHeights[i]);
+      if (currentY + step > static_cast<int>(columnHeight) && i > columnStart) {
+        size_t breakAt = i;
+        while (breakAt > columnStart && isRubyContinue(breakAt)) {
+          breakAt--;
+        }
+        while (breakAt > columnStart + 1 && !isRubyContinue(breakAt) &&
+               VerticalTextUtils::isKinsokuHead(firstCodepoint(wordAt(breakAt)))) {
+          breakAt--;
+        }
+        while (breakAt > columnStart && isRubyContinue(breakAt)) {
+          breakAt--;
+        }
+        if (breakAt > columnStart + 1 && VerticalTextUtils::isKinsokuTail(lastCodepoint(wordAt(breakAt - 1)))) {
+          breakAt--;
+          while (breakAt > columnStart && isRubyContinue(breakAt)) {
+            breakAt--;
+          }
+        }
+        while (breakAt < i && spanHeight(breakAt, i) > static_cast<int>(columnHeight)) {
+          breakAt++;
+          while (breakAt < i && isRubyContinue(breakAt)) {
+            breakAt++;
+          }
+        }
+        if (breakAt <= columnStart) breakAt = i;
+        columnEnds.push_back(breakAt);
+        columnStart = breakAt;
+        currentY = spanHeight(columnStart, i);
+        continue;
+      }
+      currentY += step;
+    }
+    if (columnStart < words.size()) {
+      columnEnds.push_back(words.size());
+    }
+  }
+
+  const size_t totalCols = columnEnds.size();
+  const size_t emitCols = (includeLastColumn || totalCols <= 1) ? totalCols : totalCols - 1;
+
+  bool isFirstColumn = true;
+  size_t emitStart = 0;
+  for (size_t col = 0; col < emitCols; col++) {
+    if (stopRequested && *stopRequested) break;
+    const size_t start = emitStart;
+    const size_t end = columnEnds[col];
+    const size_t count = end - start;
+    const uint32_t columnVisibleOffset = visibleOffsetAt(start);
+
+    std::vector<int16_t> colYpos;
+    colYpos.reserve(count);
+    int y = isFirstColumn ? firstColumnIndent : 0;
+    for (size_t j = start; j < end; j++) {
+      y += gapBefore(start, j);
+      colYpos.push_back(static_cast<int16_t>(y));
+      y += wordHeights[j];
+    }
+
+    std::vector<uint8_t> colFocus;
+    std::vector<uint16_t> colFocusSplit;
+    bool anyFocus = false;
+    for (size_t i = start; i < end; i++) {
+      if (i < wordFocusBoundary.size() && wordFocusBoundary[i] != 0) {
+        anyFocus = true;
+        break;
+      }
+    }
+    if (anyFocus) {
+      colFocus.reserve(count);
+      colFocusSplit.reserve(count);
+      for (size_t i = start; i < end; i++) {
+        const uint8_t boundary = i < wordFocusBoundary.size() ? wordFocusBoundary[i] : 0;
+        colFocus.push_back(boundary);
+        const std::string word{wordAt(i)};
+        const int wordFont = wordFontId(i, fontId);
+        const auto style = getWordStyleAt(i);
+        const bool rtl = BidiUtils::startsWithRtl(word.c_str());
+        colFocusSplit.push_back(
+            boundary == 0 ? 0
+            : rtl         ? measureFocusRtlSplitAdvance(renderer, wordFont, word, style, boundary, characterSpacing)
+                          : measureFocusPrefixAdvance(renderer, wordFont, word, style, boundary, characterSpacing));
+      }
+    }
+
+    std::vector<std::string> colWords;
+    std::vector<EpdFontFamily::Style> colStyles;
+    colWords.reserve(count);
+    colStyles.reserve(count);
+    std::vector<TextBlock::SourceRange> sourceRanges;
+    sourceRanges.reserve(count);
+    uint16_t paragraphStartWord = UINT16_MAX;
+    for (size_t i = start; i < end; i++) {
+      std::string word{wordAt(i)};
+      if (containsSoftHyphen(word)) {
+        stripSoftHyphensInPlace(word);
+      }
+      colWords.push_back(std::move(word));
+      auto style = static_cast<EpdFontFamily::Style>(getWordStyleAt(i) & ~EpdFontFamily::SMALL_CAPS);
+      const bool discretionaryHyphen = (wordStyles[i] & TextBlock::DISCRETIONARY_HYPHEN_FLAG) != 0;
+      if (discretionaryHyphen) {
+        style = static_cast<EpdFontFamily::Style>(style | TextBlock::DISCRETIONARY_HYPHEN_FLAG);
+      }
+      colStyles.push_back(style);
+      if (!paragraphStartEmitted && i == 0) paragraphStartWord = static_cast<uint16_t>(i - start);
+      const uint32_t rangeStart = visibleOffsetAt(i);
+      uint32_t rangeEnd = sourceOffsetAfter(rangeStart, countCodepoints(wordAt(i)) - discretionaryHyphen);
+      if (i + 1 < words.size() && visibleOffsetAt(i + 1) > rangeStart) {
+        rangeEnd = std::min(rangeEnd, visibleOffsetAt(i + 1));
+      }
+      sourceRanges.push_back({rangeStart, rangeEnd});
+    }
+
+    std::vector<std::string> colRubyTexts(count);
+    if (!rubyTexts.empty() && start < rubyTexts.size()) {
+      const size_t copyCount = std::min(end, rubyTexts.size()) - start;
+      std::copy(rubyTexts.begin() + start, rubyTexts.begin() + start + copyCount, colRubyTexts.begin());
+    }
+
+    std::vector<TextBlock::LinkSpan> colLinks;
+    std::vector<uint8_t> linkIdsSeen;
+    for (size_t i = 0; i < count; i++) {
+      const uint8_t linkId = wordLinkIds[start + i];
+      if (linkId == 0 || linkId > linkTargets.size()) continue;
+      size_t spanIndex = 0;
+      while (spanIndex < linkIdsSeen.size() && linkIdsSeen[spanIndex] != linkId) spanIndex++;
+      const int height = wordHeights[start + i];
+      if (spanIndex == linkIdsSeen.size()) {
+        colLinks.emplace_back();
+        auto& span = colLinks.back();
+        strncpy(span.href, linkTargets[linkId - 1].c_str(), sizeof(span.href) - 1);
+        span.href[sizeof(span.href) - 1] = '\0';
+        span.x = colYpos[i];
+        span.width = static_cast<int16_t>(height);
+        span.topLift = 0;
+        linkIdsSeen.push_back(linkId);
+      } else {
+        auto& span = colLinks[spanIndex];
+        const int top = std::min<int>(span.x, colYpos[i]);
+        const int bottom = std::max<int>(span.x + span.width, colYpos[i] + height);
+        span.x = static_cast<int16_t>(top);
+        span.width = static_cast<int16_t>(bottom - top);
+      }
+    }
+
+    auto block = makeUniqueNoThrow<TextBlock>(colWords, colYpos, colStyles, colFocus, colFocusSplit, blockStyle,
+                                              std::move(colRubyTexts), std::move(colLinks), sourceRanges,
+                                              paragraphStartWord, true);
+    const auto attachWordFonts = [&](TextBlock& textBlock) {
+      int32_t fonts[TextBlock::MAX_WORD_FONTS] = {};
+      uint8_t slots[128];
+      if (count > sizeof(slots)) return true;
+      bool mixed = false;
+      for (size_t i = 0; i < count; ++i) {
+        const size_t logical = start + i;
+        const int wordFont = wordFontId(logical, fontId);
+        uint8_t slot = 0;
+        if (wordFont != fontId) {
+          for (slot = 1; slot <= TextBlock::MAX_WORD_FONTS; ++slot) {
+            if (fonts[slot - 1] == wordFont || fonts[slot - 1] == 0) break;
+          }
+          if (slot > TextBlock::MAX_WORD_FONTS) slot = 0;
+          if (slot > 0) fonts[slot - 1] = wordFont;
+        }
+        slots[i] = static_cast<uint8_t>(slot | (wordSizeSlots[logical] & TextBlock::SMALL_CAPS_SLOT_FLAG));
+        mixed = mixed || slots[i] != 0;
+      }
+      return !mixed || textBlock.setWordFonts(slots, fonts);
+    };
+    if (!block || !block->valid() || !attachWordFonts(*block)) {
+      LOG_ERR("PTX", "Dropping column: TextBlock or arena allocation failed");
+      droppedWords = true;
+      return;
+    }
+    processColumn(std::move(block), columnVisibleOffset);
+    isFirstColumn = false;
+    emitStart = end;
+  }
+
+  if (emitStart > 0) {
+    firstLineConsumed = true;
+    paragraphStartEmitted = true;
+    for (size_t i = 0; i < emitStart; ++i) {
+      wordStore.release(words[i]);
+    }
+    words.erase(words.begin(), words.begin() + emitStart);
+    wordStyles.erase(wordStyles.begin(), wordStyles.begin() + emitStart);
+    wordContinues.erase(wordContinues.begin(), wordContinues.begin() + emitStart);
+    wordNoSpaceBefore.erase(wordNoSpaceBefore.begin(), wordNoSpaceBefore.begin() + emitStart);
+    wordFocusBoundary.erase(wordFocusBoundary.begin(), wordFocusBoundary.begin() + emitStart);
+    wordLinkIds.erase(wordLinkIds.begin(), wordLinkIds.begin() + emitStart);
+    wordSizeSlots.erase(wordSizeSlots.begin(), wordSizeSlots.begin() + emitStart);
+    eraseVisibleOffsetPrefix(emitStart);
+    if (!rubyTexts.empty()) {
+      const size_t rtConsumed = std::min(emitStart, rubyTexts.size());
       rubyTexts.erase(rubyTexts.begin(), rubyTexts.begin() + rtConsumed);
     }
   }

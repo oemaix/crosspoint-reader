@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 74
+
+Version 74 adds a `uint8_t writingMode` field after `wordSpacingPercent` in the
+section header (`0` = horizontal, `1` = vertical-rl, `2` = vertical-lr
+reserved). A `TextBlock` stores a trailing `isVertical` flag after its per-word
+font table. When that flag is set, each `wordXPos` value is the Y offset inside
+the column and `PageLine.xPos` places the column.
+
 ### Version 73
 
 Version 73 keeps the binary layout and rebuilds completed and partial sections.
@@ -397,7 +405,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 64
+#define EXPECTED_VERSION 74
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -485,6 +493,7 @@ struct TextBlock {
         s32 wordFonts[3];
         u8 wordFontSlot[wordCount] [[comment("0 = block font, n = wordFonts[n - 1]; bit 0x80 = small caps")]];
     }
+    u8 isVertical [[comment("1 = wordXPos[] is Y within a vertical column")]];
 };
 
 struct ImageBlock {
@@ -601,6 +610,7 @@ struct SectionBin {
     bool focusReadingEnabled;
     s8 characterSpacing;
     u8 wordSpacingPercent;
+    u8 writingMode [[comment("0=horizontal, 1=vertical-rl, 2=vertical-lr reserved")]];
 
     u16 pageCount;
     u32 pageLutOffset;

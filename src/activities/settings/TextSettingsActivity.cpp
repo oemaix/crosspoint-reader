@@ -27,7 +27,9 @@ constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_L
 
 constexpr StrId LAYOUT_ROW_NAME_IDS[] = {
     StrId::STR_LINE_SPACING,          StrId::STR_WORD_SPACING, StrId::STR_CHARACTER_SPACING, StrId::STR_EXTRA_SPACING,
-    StrId::STR_PARAGRAPH_INDENTATION, StrId::STR_ALIGNMENT,    StrId::STR_SCREEN_MARGIN};
+    StrId::STR_PARAGRAPH_INDENTATION, StrId::STR_ALIGNMENT,    StrId::STR_SCREEN_MARGIN,     StrId::STR_WRITING_MODE};
+constexpr StrId WRITING_MODE_IDS[] = {StrId::STR_WRITING_HORIZONTAL, StrId::STR_WRITING_VERTICAL};
+static_assert(std::size(WRITING_MODE_IDS) == CrossPointSettings::WRITING_MODE_COUNT, "writing mode labels");
 constexpr StrId STYLE_ROW_NAME_IDS[] = {StrId::STR_FOCUS_READING, StrId::STR_HYPHENATION_NO_PREVIEW,
                                         StrId::STR_EMBEDDED_STYLE_NO_PREVIEW, StrId::STR_TEXT_AA_NO_PREVIEW};
 
@@ -448,6 +450,14 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
       requestUpdate();
       break;
     }
+    case LayoutRow::WritingMode:
+      optionPopup_.show(StrId::STR_WRITING_MODE, WRITING_MODE_IDS, static_cast<int>(std::size(WRITING_MODE_IDS)),
+                        SETTINGS.writingMode, [](int idx) {
+                          SETTINGS.writingMode = static_cast<uint8_t>(idx);
+                          SETTINGS.saveToFile();
+                        });
+      requestUpdate();
+      break;
 
     default:
       break;
@@ -477,6 +487,10 @@ std::string TextSettingsActivity::layoutValueText(int row) const {
     }
     case LayoutRow::ScreenMargin:
       return std::to_string(SETTINGS.screenMargin);
+    case LayoutRow::WritingMode: {
+      const uint8_t v = SETTINGS.writingMode;
+      return v < std::size(WRITING_MODE_IDS) ? I18N.get(WRITING_MODE_IDS[v]) : I18N.get(StrId::STR_WRITING_HORIZONTAL);
+    }
 
     default:
       return "";

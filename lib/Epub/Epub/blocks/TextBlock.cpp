@@ -6,6 +6,8 @@
 #include <Memory.h>
 #include <MemoryManager.h>
 #include <Serialization.h>
+#include <Utf8.h>
+#include <VerticalTextUtils.h>
 
 #include <cstring>
 #include <string_view>
@@ -48,9 +50,10 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
                      const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
                      const std::vector<uint16_t>& focusSplitX, const BlockStyle& blockStyle,
                      std::vector<std::string> rubyTexts, std::vector<LinkSpan> linkSpans,
-                     const std::vector<SourceRange>& ranges, const uint16_t paragraphStartWord)
+                     const std::vector<SourceRange>& ranges, const uint16_t paragraphStartWord, const bool vertical)
     : blockStyle(blockStyle),
       paragraphStartWord(paragraphStartWord),
+      isVertical(vertical),
       rubyTexts(std::move(rubyTexts)),
       linkSpans(std::move(linkSpans)) {
   // Same invariant as deserialize(): a block never holds an all-empty rubyTexts, so a
@@ -197,6 +200,72 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
   // A sized variant that can no longer be loaded falls back to the section font.
   const int fontId = renderFontId(renderer, blockFontId(sectionFontId), sectionFontId);
   const int8_t tracking = blockStyle.characterSpacing;
+
+  if (isVertical) {
+    const bool scanning = renderer.isFontCacheScanning();
+    const int columnWidth = renderer.getLineHeight(fontId);
+    const int rubyX = x + columnWidth + 2;
+    const auto drawRun = [&](const int runFont, const char* run, const int runY, const EpdFontFamily::Style runStyle) {
+      if (run == nullptr || run[0] == '\0') return;
+      const unsigned char* ptr = reinterpret_cast<const unsigned char*>(run);
+      const uint32_t firstCp = utf8NextCodepoint(&ptr);
+      if (VerticalTextUtils::isUprightInVertical(firstCp) || firstCp == 0) {
+        renderer.drawTextVertical(runFont, x, runY, run, true, runStyle);
+      } else {
+        renderer.drawTextSideways(runFont, x, runY, run, true, runStyle, columnWidth);
+      }
+    };
+    for (uint16_t i = 0; i < numWords; i++) {
+      const char* word = wordText(i);
+      const int wordY = y + xposArr[i];
+      const int wordFont = renderFontId(renderer, wordFontId(i, sectionFontId), sectionFontId);
+      const EpdFontFamily::Style currentStyle = wordStyle(i);
+      const uint8_t boundary = focusBoundary(i);
+      int runAdvance = renderer.getTextAdvanceX(wordFont, word, currentStyle, tracking);
+      if (boundary > 0 && boundary < wordTextLen(i)) {
+        char boldBuf[40];
+        const auto boldStyle = static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
+        const size_t boldLen = std::min<size_t>(boundary, sizeof(boldBuf) - 1);
+        memcpy(boldBuf, word, boldLen);
+        boldBuf[boldLen] = '\0';
+        drawRun(wordFont, boldBuf, wordY, boldStyle);
+        const int suffixY = wordY + static_cast<int>(focusSplitX(i));
+        drawRun(wordFont, word + boldLen, suffixY, currentStyle);
+        runAdvance = static_cast<int>(focusSplitX(i)) +
+                     renderer.getTextAdvanceX(wordFont, word + boldLen, currentStyle, tracking);
+      } else if (boundary > 0) {
+        const auto boldStyle = static_cast<EpdFontFamily::Style>(currentStyle | EpdFontFamily::BOLD);
+        drawRun(wordFont, word, wordY, boldStyle);
+        runAdvance = renderer.getTextAdvanceX(wordFont, word, boldStyle, tracking);
+      } else {
+        drawRun(wordFont, word, wordY, currentStyle);
+      }
+      if (!scanning && EpdFontFamily::hasTextDecoration(currentStyle) && runAdvance > 0) {
+        if ((currentStyle & EpdFontFamily::UNDERLINE) != 0) {
+          const int lineX = x + columnWidth - 2;
+          renderer.drawLine(lineX, wordY, lineX, wordY + runAdvance, 2, true);
+        }
+        if ((currentStyle & EpdFontFamily::STRIKETHROUGH) != 0) {
+          const int lineX = x + columnWidth / 2;
+          renderer.drawLine(lineX, wordY, lineX, wordY + runAdvance, 2, true);
+        }
+      }
+      if (i < rubyTexts.size() && !rubyTexts[i].empty() && (currentStyle & EpdFontFamily::RUBY_CONTINUE) == 0) {
+        int groupWordCount = 1;
+        while (i + groupWordCount < numWords && (wordStyle(i + groupWordCount) & EpdFontFamily::RUBY_CONTINUE) != 0) {
+          groupWordCount++;
+        }
+        const int last = i + groupWordCount - 1;
+        const int groupTop = wordY;
+        const int groupBottom =
+            y + xposArr[last] + renderer.getTextAdvanceX(wordFont, wordText(last), wordStyle(last), tracking);
+        const int rubyHeight = renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP, tracking);
+        const int rubyY = groupTop + (groupBottom - groupTop - rubyHeight) / 2;
+        renderer.drawTextVertical(fontId, rubyX, rubyY, rubyTexts[i].c_str(), true, EpdFontFamily::SUP);
+      }
+    }
+    return;
+  }
 
   const bool scanning = renderer.isFontCacheScanning();
   // Words in other sizes share the baseline set by the line's tallest font.
@@ -510,6 +579,7 @@ bool TextBlock::serialize(HalFile& file) const {
     }
   }
 
+  serialization::writePod(file, static_cast<uint8_t>(isVertical ? 1 : 0));
   return true;
 }
 
@@ -639,6 +709,10 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
       }
     }
   }
+
+  uint8_t verticalFlag = 0;
+  serialization::readPod(file, verticalFlag);
+  block->isVertical = verticalFlag != 0;
 
   return block;
 }

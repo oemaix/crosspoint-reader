@@ -382,6 +382,13 @@ class GfxRenderer {
   // Helper for drawing rotated text (90 degrees clockwise, for side buttons)
   void drawTextRotated90CW(int fontId, int x, int y, const char* text, bool black = true,
                            EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  // Vertical EPUB body text: upright CJK stacked top-to-bottom.
+  void drawTextVertical(int fontId, int x, int y, const char* text, bool black = true,
+                        EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  // Latin / non-CJK runs in a vertical column: each glyph is rotated 90° CW
+  // and advances downward. columnWidth > 0 centers the run in the column.
+  void drawTextSideways(int fontId, int x, int y, const char* text, bool black = true,
+                        EpdFontFamily::Style style = EpdFontFamily::REGULAR, int columnWidth = 0) const;
   int getTextHeight(int fontId) const;
 
   // Grayscale functions

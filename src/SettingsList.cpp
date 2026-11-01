@@ -97,6 +97,10 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
                           StrId::STR_BOOK_S_STYLE},
                          "paragraphAlignment", StrId::STR_CAT_READER)
            .withTextSettings());
+  emit(SettingInfo::Enum(StrId::STR_WRITING_MODE, &CrossPointSettings::writingMode,
+                         {StrId::STR_WRITING_HORIZONTAL, StrId::STR_WRITING_VERTICAL}, "writingMode",
+                         StrId::STR_CAT_READER)
+           .withTextSettings());
   emit(SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                            StrId::STR_CAT_READER)
            .withTextSettings());

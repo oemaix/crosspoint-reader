@@ -2,6 +2,7 @@
 #include <Epub/Page.h>
 #include <Epub/converters/ImageDimsProbe.h>
 #include <GfxRenderer.h>
+#include <VerticalTextUtils.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -125,6 +126,110 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
     return selected;
   }
 };
+
+TEST(VerticalTextUtilsTest, MapsCommonTategakiPunctuationToVerticalForms) {
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0x3001), 0xFE11u);
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0x3002), 0xFE12u);
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0x300C), 0xFE41u);
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0x300D), 0xFE42u);
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0xFF01), 0xFE15u);
+  EXPECT_EQ(VerticalTextUtils::verticalPresentationForm(0x4E00), 0u);
+  EXPECT_TRUE(VerticalTextUtils::isSidewaysPunctuation(0x30FC));
+  EXPECT_FALSE(VerticalTextUtils::isSidewaysPunctuation(0x3002));
+}
+
+namespace {
+
+int columnBottom(const GfxRenderer& renderer, const TextBlock& column) {
+  const uint16_t last = column.wordCount() - 1;
+  return column.wordXpos(last) + renderer.getTextAdvanceX(0, column.wordText(last), column.wordStyle(last));
+}
+
+}  // namespace
+
+TEST_F(ChapterHtmlSlimParserTest, VerticalColumnsBreakOnHeightAndStoreYOffsets) {
+  ParsedText text(false, false, BlockStyle(), 0);
+  for (int i = 0; i < 8; ++i) {
+    text.addWord("A", EpdFontFamily::REGULAR);
+  }
+  std::vector<int> columnWordCounts;
+  std::vector<int16_t> firstColumnY;
+  text.layoutVerticalColumns(renderer, 0, 20, [&](std::unique_ptr<TextBlock> column, auto) {
+    ASSERT_TRUE(column);
+    EXPECT_TRUE(column->isVerticalWriting());
+    ASSERT_GT(column->wordCount(), 0u);
+    EXPECT_LE(columnBottom(renderer, *column), 20);
+    columnWordCounts.push_back(column->wordCount());
+    if (firstColumnY.empty()) {
+      for (uint16_t i = 0; i < column->wordCount(); ++i) {
+        firstColumnY.push_back(column->wordXpos(i));
+      }
+    }
+  });
+  // "A" is 8px and a following word adds a 4px space, so 8+4+8 fits in 20.
+  ASSERT_EQ(columnWordCounts.size(), 4u);
+  for (const int count : columnWordCounts) {
+    EXPECT_EQ(count, 2);
+  }
+  ASSERT_EQ(firstColumnY.size(), 2u);
+  EXPECT_EQ(firstColumnY[0], 0);
+  EXPECT_EQ(firstColumnY[1], 12);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, VerticalColumnsKeepSpacesBetweenLatinWords) {
+  ParsedText text(false, false, BlockStyle(), 0);
+  text.addWord("Hello", EpdFontFamily::REGULAR);
+  text.addWord("World", EpdFontFamily::REGULAR);
+  std::vector<int16_t> yPositions;
+  text.layoutVerticalColumns(renderer, 0, 100, [&](std::unique_ptr<TextBlock> column, auto) {
+    ASSERT_TRUE(column);
+    for (uint16_t i = 0; i < column->wordCount(); ++i) {
+      yPositions.push_back(column->wordXpos(i));
+    }
+  });
+  ASSERT_EQ(yPositions.size(), 2u);
+  EXPECT_EQ(yPositions[0], 0);
+  EXPECT_EQ(yPositions[1], 44);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, VerticalKinsokuKeepsClosingPunctuationWithPreviousWord) {
+  ParsedText text(false, false, BlockStyle(), 0);
+  text.addWord("A", EpdFontFamily::REGULAR);
+  text.addWord("B", EpdFontFamily::REGULAR, false, true);
+  text.addWord("。", EpdFontFamily::REGULAR, false, true);
+  std::vector<int> columnWordCounts;
+  text.layoutVerticalColumns(renderer, 0, 20, [&](std::unique_ptr<TextBlock> column, auto) {
+    ASSERT_TRUE(column);
+    ASSERT_GT(column->wordCount(), 0u);
+    EXPECT_LE(columnBottom(renderer, *column), 20);
+    columnWordCounts.push_back(column->wordCount());
+  });
+  // "。" cannot start a column, and it still fits beside "B" in the 20px height.
+  ASSERT_EQ(columnWordCounts.size(), 2u);
+  EXPECT_EQ(columnWordCounts[0], 1);
+  EXPECT_EQ(columnWordCounts[1], 2);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, VerticalRubyGroupStaysInOneColumn) {
+  ParsedText text(false, false, BlockStyle(), 0);
+  text.addWord("A", EpdFontFamily::REGULAR);
+  text.addWord("B", EpdFontFamily::REGULAR, false, true);
+  text.addWord("C", static_cast<EpdFontFamily::Style>(EpdFontFamily::REGULAR | EpdFontFamily::RUBY_CONTINUE), false,
+               true);
+  std::vector<std::vector<EpdFontFamily::Style>> styles;
+  text.layoutVerticalColumns(renderer, 0, 20, [&](std::unique_ptr<TextBlock> column, auto) {
+    ASSERT_TRUE(column);
+    std::vector<EpdFontFamily::Style> columnStyles;
+    for (uint16_t i = 0; i < column->wordCount(); ++i) {
+      columnStyles.push_back(column->wordStyle(i));
+    }
+    styles.push_back(std::move(columnStyles));
+  });
+  ASSERT_EQ(styles.size(), 2u);
+  ASSERT_EQ(styles[0].size(), 1u);
+  ASSERT_EQ(styles[1].size(), 2u);
+  EXPECT_NE(styles[1][1] & EpdFontFamily::RUBY_CONTINUE, 0);
+}
 
 TEST(ImageDimsProbe, ReadsBothGifSignaturesInFragmentedStreams) {
   for (const uint8_t version : {'7', '9'}) {

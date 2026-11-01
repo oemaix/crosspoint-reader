@@ -24,6 +24,11 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool focusReadingEnabled = false;
+  // 0 = horizontal, 1 = vertical-rl (CJK tategaki), 2 = vertical-lr (reserved).
+  uint8_t writingMode = 0;
+
+  bool isVertical() const { return writingMode != 0; }
+  bool columnsFlowRightToLeft() const { return writingMode != 2; }
 };
 
 // Stable signature for clipping anchors. Page-local word ordinals are valid
