@@ -35,3 +35,5 @@ sdkconfig.x4pro
 flake.*
 
 /tmp
+.devcontainer/host-user
+.cursor/

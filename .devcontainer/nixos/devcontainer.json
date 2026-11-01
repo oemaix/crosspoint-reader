@@ -1,0 +1,43 @@
+{
+  "name": "crosspoint-reader (NixOS host)",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "initializeCommand": "sh .devcontainer/require-host.sh nixos",
+  "runArgs": ["--name", "crosspoint-reader-nixos"],
+  "mounts": [
+    "source=/nix,target=/nix,type=bind",
+    "source=/run/current-system,target=/run/current-system,type=bind,readonly",
+    "source=/etc/nix/nix.conf,target=/etc/nix/nix.conf,type=bind,readonly",
+    // Mounts from .devcontainer/extra-mounts.txt
+    "source=${localEnv:HOME}/.config/git/config,target=/etc/gitconfig.host,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/gh,target=/home/dev/.config/gh,type=bind,readonly"
+  ],
+  "postCreateCommand": "sudo /opt/devcontainer/realize.sh \"$(id -un)\"",
+  "customizations": {
+    "vscode": {
+      "extensions": [],
+      "settings": {
+        "terminal.integrated.profiles.linux": {
+          "nix develop": {
+            "path": "nix",
+            "args": [
+              "develop",
+              "${workspaceFolder}/nix",
+              "--command",
+              "${env:SHELL}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "overrideName": true
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "nix develop"
+      }
+    }
+  }
+}

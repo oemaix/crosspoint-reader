@@ -1,0 +1,15 @@
+# One devcontainer mount per line. Copy each line into every profile's mounts
+# array. Do not mount $HOME. Do not write a gid.
+#
+# This clone's Git identity is $HOME/.config/git/config. There is no
+# ~/.gitconfig and no include.path. GitHub remotes use the gh credential
+# helper (a Nix store path). The global helper is libsecret; these remotes
+# do not use it, so the session bus is not mounted.
+#
+# This NixOS host's /etc/nix/nix.conf sets experimental-features. That bind
+# is only in the NixOS profile. The Nix and Other profiles omit it: a host
+# without that file makes Docker fail the create. The image nix.conf still
+# enables flakes.
+
+source=${localEnv:HOME}/.config/git/config,target=/etc/gitconfig.host,type=bind,readonly
+source=${localEnv:HOME}/.config/gh,target=/home/dev/.config/gh,type=bind,readonly

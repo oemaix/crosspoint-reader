@@ -192,6 +192,8 @@ nix develop -f nix
 nix-shell nix
 ```
 
+A Dev Container is optional. It is an Ubuntu session whose tools still come from the flake under `nix/`. Opening this repository on the host without Docker is unchanged.
+
 To flash a connected ESP32-C3 device, enable PlatformIO's udev rules in your NixOS configuration:
 
 ```nix
